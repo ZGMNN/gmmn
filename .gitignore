@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+
+# Env files (real secrets per environment, kept out of git)
+.env
+.env.*
+!.env.example
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Test coverage
+coverage/
