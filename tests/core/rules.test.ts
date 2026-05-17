@@ -9,7 +9,9 @@ import {
   calcPipCount,
   canLand,
   farthestHome,
+  getCandidateMoves,
   getValidMoves,
+  maxSequenceLength,
   pipDist,
 } from '../../src/core/rules.js';
 import { newGameState } from '../../src/core/state.js';
@@ -252,5 +254,103 @@ describe('intégration : un mini-scénario complet', () => {
     // P1 en 23 peut bouger de 3 → 20 (case vide)
     const ns = applyMove(s, 1, { f: 23, t: 20, d: 3 });
     expect(calcPipCount(ns, 1)).toBe(pipBefore - 3);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Règle stricte : use-both-dice + higher-die. C'est ici que `getValidMoves`
+// se distingue de `getCandidateMoves`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('maxSequenceLength', () => {
+  it('renvoie 0 quand aucun dé restant', () => {
+    expect(maxSequenceLength(makeState({ moves: [] }), 1)).toBe(0);
+  });
+
+  it('renvoie 0 quand aucun coup possible (tous bloqués)', () => {
+    const s = makeState({ bar: { 1: 1, 2: 0 }, moves: [3, 5] });
+    s.pts[21] = { n: 2, p: 2 }; // d=3 ko
+    s.pts[19] = { n: 2, p: 2 }; // d=5 ko
+    expect(maxSequenceLength(s, 1)).toBe(0);
+  });
+
+  it('renvoie 2 quand une séquence consomme les deux dés', () => {
+    // P1 unique en 5, dés [2,4] → 5→3 (d=2) puis 3→off (d=4 overshoot, allHome)
+    const s = makeState({ moves: [2, 4] });
+    s.pts[5] = { n: 1, p: 1 };
+    expect(maxSequenceLength(s, 1)).toBe(2);
+  });
+
+  it('renvoie 1 quand un seul dé est jouable et l’autre est bloqué', () => {
+    // P1 unique en 10, dés [2,5]. pts[3] bloqué : ni 10→8→3 ni 10→5→3.
+    const s = makeState({ moves: [2, 5] });
+    s.pts[10] = { n: 1, p: 1 };
+    s.pts[3] = { n: 2, p: 2 };
+    expect(maxSequenceLength(s, 1)).toBe(1);
+  });
+});
+
+describe('getValidMoves — règle stricte use-both-dice', () => {
+  it('filtre effectivement quand un seul candidat permet d’utiliser un dé', () => {
+    // P1 en 7 et 6, dés [6,5]. Toutes les destinations à d=6 sont bloquées
+    // par P2 ; seul 7→2 (d=5) est jouable, et après ce coup d=6 reste
+    // injouable (pions en 2 et 6, hors home → pas de bear-off). target=1,
+    // règle higher-die : higher=6 mais aucun candidat à d=6 → fallback d=5.
+    const s = makeState({ moves: [6, 5] });
+    s.pts[7] = { n: 1, p: 1 };
+    s.pts[6] = { n: 1, p: 1 };
+    s.pts[1] = { n: 2, p: 2 };
+    s.pts[0] = { n: 2, p: 2 };
+    expect(getValidMoves(s, 1)).toEqual([{ f: 7, t: 2, d: 5 }]);
+  });
+
+  it('règle higher-die : impose le dé le plus grand quand un seul est jouable', () => {
+    // P1 unique en 10, dés [2,5]. d=2 mène à un dead-end (impossible d'enchaîner
+    // sur d=5), d=5 mène à un dead-end aussi. maxSeq=1. Higher=5 jouable seul
+    // → on doit utiliser le 5.
+    const s = makeState({ moves: [2, 5] });
+    s.pts[10] = { n: 1, p: 1 };
+    s.pts[8] = { n: 2, p: 2 }; // bloque 10→8 (d=2)
+    s.pts[3] = { n: 2, p: 2 }; // bloque continuations 5→3 / 8→3
+    expect(getValidMoves(s, 1)).toEqual([{ f: 10, t: 5, d: 5 }]);
+  });
+
+  it('règle higher-die : si seul le petit dé est jouable, on l’accepte', () => {
+    // Même setup mais d=5 bloqué d'entrée et d=2 jouable seul.
+    const s = makeState({ moves: [2, 5] });
+    s.pts[10] = { n: 1, p: 1 };
+    s.pts[5] = { n: 2, p: 2 }; // bloque 10→5 (d=5)
+    s.pts[3] = { n: 2, p: 2 }; // bloque 8→3 (d=5 après 10→8 d=2)
+    expect(getValidMoves(s, 1)).toEqual([{ f: 10, t: 8, d: 2 }]);
+  });
+
+  it('lose-turn : renvoie [] si aucun coup n’est possible', () => {
+    const s = makeState({ bar: { 1: 1, 2: 0 }, moves: [3, 5] });
+    s.pts[21] = { n: 2, p: 2 };
+    s.pts[19] = { n: 2, p: 2 };
+    expect(getValidMoves(s, 1)).toEqual([]);
+  });
+
+  it('doubles : la règle "higher die" est vacante mais use-both-dice s’applique', () => {
+    // P1 unique en 5, dés [3,3,3,3], allHome. 5→2 puis 2→off (exact) :
+    // 2 dés consommés, les 2 derniers sont perdus (plus de pions). uniq=[3]
+    // donc règle higher-die vacante.
+    const s = makeState({ moves: [3, 3, 3, 3] });
+    s.pts[5] = { n: 1, p: 1 };
+    expect(getValidMoves(s, 1)).toEqual([{ f: 5, t: 2, d: 3 }]);
+    expect(maxSequenceLength(s, 1)).toBe(2);
+  });
+});
+
+describe('getCandidateMoves vs getValidMoves', () => {
+  it('candidats ⊇ légaux toujours', () => {
+    // Sanity check sur l'état initial avec un roll varié.
+    const s = newGameState();
+    s.moves = [3, 5];
+    const cand = getCandidateMoves(s, 1);
+    const legal = getValidMoves(s, 1);
+    for (const m of legal) {
+      expect(cand).toContainEqual(m);
+    }
   });
 });

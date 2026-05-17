@@ -4,9 +4,17 @@
 // `applyMove` renvoie un nouvel état (via `clone`), jamais de mutation
 // in-place sur l'argument.
 //
-// Limitation connue (héritée du legacy) : on ne force pas la règle "use
-// both dice if possible". À ajouter quand on tackle la conformité stricte
-// FIBS — voir TODO en bas de fichier.
+// Architecture en deux étages :
+//   - `getCandidateMoves` : générateur "brut" — tous les coups physiquement
+//     possibles (entrée depuis la barre, déplacement, bear-off) sans tenir
+//     compte des règles de séquence.
+//   - `getValidMoves`     : règle stricte de backgammon par-dessus. Filtre
+//     pour ne garder que les coups qui font partie d'une séquence consommant
+//     le maximum de dés possible, et applique la règle "use the higher die
+//     when only one can be played".
+//
+// Les callers (UI, IA, validation serveur) doivent utiliser `getValidMoves`.
+// `getCandidateMoves` reste exporté pour le debug et l'outillage.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { GameState, Move, Player, Point } from '../types/game.js';
@@ -75,7 +83,11 @@ export function farthestHome(s: GameState, pl: Player): number {
 }
 
 /**
- * Liste des coups légaux pour `pl` à partir de l'état courant.
+ * Coups "candidats" pour `pl` — générateur brut sans application de la règle
+ * de séquence (use-both-dice, higher-die). À n'utiliser que comme building
+ * block de `getValidMoves` ou pour du debug ; côté UI / IA / validation
+ * serveur, prendre `getValidMoves` à la place.
+ *
  *  - Tant qu'il y a des pions sur la barre, on n'autorise que les rentrées.
  *  - Sinon : pour chaque pion, on essaie chaque valeur de dé encore dispo.
  *  - Bear-off autorisé uniquement si `allHome`. Overshoot (d > dd) accepté
@@ -85,7 +97,7 @@ export function farthestHome(s: GameState, pl: Player): number {
  * coups identiques quand on a un double — `applyMove` consomme une instance
  * à la fois, donc on peut rappeler la fonction après chaque coup.
  */
-export function getValidMoves(s: GameState, pl: Player): Move[] {
+export function getCandidateMoves(s: GameState, pl: Player): Move[] {
   const mv: Move[] = [];
   const u = [...new Set(s.moves)];
 
@@ -117,6 +129,82 @@ export function getValidMoves(s: GameState, pl: Player): Move[] {
     }
   }
   return mv;
+}
+
+/**
+ * Longueur de la plus longue séquence légale de coups jouable depuis l'état
+ * courant (DFS sur les candidats, déduplication des branches équivalentes).
+ *
+ * Coûteux dans l'absolu (branching × profondeur jusqu'à 4 pour un double),
+ * mais en pratique le branching est faible et l'early-exit via
+ * `best >= s.moves.length` coupe court dès qu'on a trouvé une séquence
+ * complète. Pas de mémoïsation : la fonction est appelée au plus une fois
+ * par tour côté UI/IA, et le gain ne justifie pas la complexité.
+ */
+export function maxSequenceLength(s: GameState, pl: Player): number {
+  if (s.moves.length === 0) return 0;
+  const cand = getCandidateMoves(s, pl);
+  if (cand.length === 0) return 0;
+
+  let best = 0;
+  const seen = new Set<string>();
+  for (const m of cand) {
+    const key = `${String(m.f)}|${String(m.t)}|${m.d}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const ns = applyMove(s, pl, m);
+    const sub = 1 + maxSequenceLength(ns, pl);
+    if (sub > best) best = sub;
+    if (best >= s.moves.length) break;
+  }
+  return best;
+}
+
+/**
+ * Coups *légaux* pour `pl` — `getCandidateMoves` filtré par la règle stricte
+ * de séquence du backgammon :
+ *
+ *   1. On ne garde que les coups qui peuvent être prolongés en une séquence
+ *      consommant `maxSequenceLength(s, pl)` dés au total. Autrement dit :
+ *      si une séquence permet d'utiliser les deux dés, on n'autorise pas un
+ *      premier coup qui rendrait le second impossible.
+ *
+ *   2. Cas particulier (non-doubles, un seul dé jouable au total) : on doit
+ *      utiliser le dé le plus élevé si possible. Si seul le petit est
+ *      jouable, on n'a pas le choix.
+ *
+ * Pour un double, s.moves est `[d,d,d,d]` — la règle "higher die" est
+ * vacante (un seul dé distinct), seule la règle (1) s'applique.
+ *
+ * Si aucune séquence n'existe (target = 0), le joueur perd son tour : on
+ * renvoie un tableau vide et le caller fait avancer le `turn`.
+ */
+export function getValidMoves(s: GameState, pl: Player): Move[] {
+  const cand = getCandidateMoves(s, pl);
+  if (cand.length === 0) return [];
+
+  const target = maxSequenceLength(s, pl);
+  if (target === 0) return [];
+
+  // (1) Garde seulement les coups qui prolongent à la longueur maximale.
+  const extending = cand.filter((m) => {
+    const ns = applyMove(s, pl, m);
+    return 1 + maxSequenceLength(ns, pl) >= target;
+  });
+
+  // (2) Règle "higher die" — non-doubles, les deux dés encore pendants,
+  // et seul un des deux est jouable seul.
+  const uniq = [...new Set(s.moves)];
+  if (target === 1 && uniq.length === 2) {
+    const high = Math.max(...uniq);
+    const highUsable = extending.some((m) => m.d === high);
+    if (highUsable) {
+      return extending.filter((m) => m.d === high);
+    }
+  }
+
+  return extending;
 }
 
 /**
@@ -156,8 +244,3 @@ export function applyMove(s: GameState, pl: Player, m: Move): GameState {
 
   return ns;
 }
-
-// TODO(rules-strict) : implémenter la règle "le joueur doit utiliser les deux
-// dés s'il existe une séquence légale qui les consomme tous, et la plus
-// grande valeur si une seule peut être jouée". Aujourd'hui un client mal
-// intentionné pourrait skipper un dé jouable.
