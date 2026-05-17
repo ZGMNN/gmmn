@@ -1,10 +1,27 @@
 // src/core/ — logique de jeu pure, sans dépendance au rendu.
 //
-// Contenu cible : state.ts (état + reducers), moves.ts (génération + validation
-// coups), dice.ts (lancer + ordre), win.ts (détection simple/gammon/backgammon),
-// match.ts (score session, cube, ouverture).
+// Décomposition :
+//   - board.ts  : plateau initial + tables d'index visuels
+//   - dice.ts   : lancers (acceptent un RNG injectable pour les tests)
+//   - state.ts  : constructeurs / clone / opening / win
+//   - rules.ts  : génération + application des coups
 //
-// Cette couche doit être 100% testable en isolation (Vitest), aucun import
-// de p5 ni de Firebase.
+// Cette couche est 100% testable en isolation (Vitest), aucun import de p5
+// ni de Firebase.
 
-export {};
+export * from './board.js';
+export * from './dice.js';
+export * from './state.js';
+export * from './rules.js';
+export type {
+  ByPlayer,
+  GameState,
+  Move,
+  MoveFrom,
+  MoveTo,
+  OpeningResolution,
+  Phase,
+  Player,
+  PlayerOrNone,
+  Point,
+} from '../types/game.js';
