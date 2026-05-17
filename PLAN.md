@@ -53,11 +53,12 @@ Mettre en place le harnais propre dans lequel tout le reste va vivre.
 
 ### Transfert du code existant
 
-- [ ] Port `devanture/game/logic_standalone.js` + `app/src/game/logic.js` (mergés) → `src/core/`
-- [ ] Port `devanture/game/ai_standalone.js` + `app/src/game/ai.js` → `src/ai/greedy.ts`
+- [x] Port `devanture/game/logic.js` + `app/src/game/logic.js` (identiques) → `src/core/{board,dice,state,rules}.ts` + types dans `src/types/game.ts`, RNG injectable, 52 tests Vitest
+- [x] Port `devanture/game/ai.js` + `app/src/game/ai.js` → `src/ai/greedy.ts` + interface `AIEvaluator` versionnée (`greedy-v1`), 8 tests
 - [ ] Port `devanture/adapter.js` (cube, timers, profile struct) → modules séparés dans `src/core/` et `src/screens/game/`
 - [ ] Port `devanture/sketch.js` (~5800 lignes) en modules dans `src/render/` et `src/screens/`
 - [ ] Copier les assets (fonts PIX-DOT-1/2, nortechico, fond0…6.jpg) dans `assets/`
+- [ ] TODO(rules-strict) : règle "use both dice if possible" (cf. `src/core/rules.ts`)
 
 ### Observabilité minimale
 
